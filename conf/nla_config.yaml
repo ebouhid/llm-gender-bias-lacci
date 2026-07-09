@@ -1,0 +1,30 @@
+defaults:
+  - main_config
+  - _self_
+
+BASE_MODEL: "Qwen/Qwen2.5-7B-Instruct"
+NLA_LAYER: 20
+AV_CHECKPOINT: "checkpoints/nla-qwen2.5-7b-L20-av"
+AR_CHECKPOINT: "checkpoints/nla-qwen2.5-7b-L20-ar"
+
+SGLANG_NLA_URL: "http://localhost:30001"
+DEVICE: "cuda:0"
+DTYPE: "bfloat16"
+
+VERBALIZATION_TIER: "tier1"
+TEMPERATURE: 0.7
+MAX_NEW_TOKENS: 200
+
+ARTIFACTS_DIR: "artifacts/nla"
+
+# Optional path for outcome-linked analysis join
+GENERATION_JSONL: "data/generated_recommendations.jsonl"
+
+RUN_ID: null
+
+hydra:
+  job:
+    chdir: false
+  run:
+    dir: .
+  output_subdir: null

@@ -2,4 +2,6 @@
 !.pixi/config.toml
 .env
 /outputs
+/artifacts/nla/
+/checkpoints/
 __pycache__/

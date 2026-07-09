@@ -9,6 +9,10 @@ version = "0.1.0"
 teste = "python teste.py"
 main = "python run_main.py"
 analysis = "python run_analysis.py"
+nla-extract = "python scripts/extract_nla_activations.py"
+nla-verbalize = "python scripts/run_nla_verbalization.py"
+nla-reconstruct = "python scripts/run_nla_reconstruction.py"
+nla-analyze = "python scripts/analyze_nla_gender_bias.py"
 
 [dependencies]
 python = "3.12.*"
@@ -29,4 +33,13 @@ openpyxl = ">=3.1.5,<4"
 
 [pypi-dependencies]
 xai-sdk = ">=1.4.1, <2"
+torch = ">=2.0"
+transformers = ">=4.40"
+safetensors = ">=0.4"
+httpx = ">=0.27"
+orjson = ">=3.9"
+pyyaml = ">=6.0"
+numpy = ">=1.26"
+pyarrow = ">=14.0"
+accelerate = ">=1.10"
 

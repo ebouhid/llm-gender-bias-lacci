@@ -1,25 +1,26 @@
 MODELOS_A_AVALIAR:
-  - ["openai/gpt-oss-120b", "deepinfra"] # US$0.039 input / US$0.19 output por 1M tokens
-  - ["google/gemini-2.5-flash", "deepinfra"] # US$0.30 input / US$2.50 output por 1M tokens
+  # - ["openai/gpt-oss-120b", "deepinfra"] # US$0.039 input / US$0.19 output por 1M tokens
+  # - ["google/gemini-2.5-flash", "deepinfra"] # US$0.30 input / US$2.50 output por 1M tokens
   # - ["google/gemini-3.1-pro", "deepinfra"] # US$2.00 input / US$12.00 output por 1M tokens
   # - ["google/gemma-3-4b-it", "deepinfra"]
   # - ["google/gemma-3-12b-it", "deepinfra"]
   # - ["google/gemma-3-27b-it", "deepinfra"]
-  - ["google/gemma-4-31B-it", "deepinfra"] # US$0.13 input / US$0.38 output por 1M tokens
-  - ["sabia-4", "maritaca"]
-  - ["meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8", "deepinfra"] # US$0.15 input / US$0.60 output por 1M tokens
+  # - ["google/gemma-4-31B-it", "deepinfra"] # US$0.13 input / US$0.38 output por 1M tokens
+  # - ["sabia-4", "maritaca"]
+  # - ["meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8", "deepinfra"] # US$0.15 input / US$0.60 output por 1M tokens
   # - ["NousResearch/Hermes-3-Llama-3.1-405B", "deepinfra"]
-  - ["deepseek-ai/DeepSeek-V4-Pro", "deepinfra"] # US$1.30 input / US$2.60 output por 1M tokens; US$0.10 cached input
+  # - ["deepseek-ai/DeepSeek-V4-Pro", "deepinfra"] # US$1.30 input / US$2.60 output por 1M tokens; US$0.10 cached input
   # - ["deepseek-ai/DeepSeek-V4-Flash", "deepinfra"]
   # - ["anthropic/claude-sonnet-4-6", "deepinfra"] # US$3.00 input / US$15.00 output por 1M tokens
   # - ["anthropic/claude-opus-4-7", "deepinfra"]
   # - ["microsoft/phi-4", "deepinfra"]
   # - ["zai-org/GLM-5.1", "deepinfra"]
   # - ["moonshotai/Kimi-K2.6", "deepinfra"]
-  - ["mistralai/Mistral-Small-3.2-24B-Instruct-2506", "deepinfra"] # US$0.075 input / US$0.20 output por 1M tokens
-  - ["Qwen/Qwen3-235B-A22B-Instruct-2507", "deepinfra"] # US$0.071 input / US$0.10 output por 1M tokens
+  # - ["mistralai/Mistral-Small-3.2-24B-Instruct-2506", "deepinfra"] # US$0.075 input / US$0.20 output por 1M tokens
+  # - ["Qwen/Qwen3-235B-A22B-Instruct-2507", "deepinfra"] # US$0.071 input / US$0.10 output por 1M tokens
   # - ["Qwen/Qwen3-Max", "deepinfra"] # US$1.20 input / US$6.00 output por 1M tokens; US$0.24 cached input
-  - ["nvidia/NVIDIA-Nemotron-3-Super-120B-A12B", "deepinfra"] # US$0.10 input / US$0.50 output por 1M tokens
+  # - ["nvidia/NVIDIA-Nemotron-3-Super-120B-A12B", "deepinfra"] # US$0.10 input / US$0.50 output por 1M tokens
+  - ["Qwen/Qwen2.5-7B-Instruct", "local_openai"]
 
 TEMPERATURES: [0.0]
 REPETICOES_POR_TEMP: 1

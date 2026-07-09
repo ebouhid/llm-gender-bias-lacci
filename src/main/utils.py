@@ -10,6 +10,8 @@ from xai_sdk import Client
 from dotenv import load_dotenv
 from xai_sdk.chat import user, system
 from openai import OpenAI, AsyncOpenAI
+from openai import AsyncOpenAI
+import os
 
 load_dotenv()
 
@@ -19,6 +21,8 @@ GROK_API_KEY = os.getenv("GROK_API_KEY")
 DEEPINFRA_API_KEY = os.getenv("DEEPINFRA_API_KEY")
 MARITACA_API_KEY = os.getenv("MARITACA_API_KEY")
 OLLAMA_HOST = os.getenv("OLLAMA_HOST")
+LOCAL_TIPO_OPENAI_BASE_URL = os.getenv("LOCAL_TIPO_OPENAI_BASE_URL", "http://127.0.0.1:30000/v1")
+LOCAL_TIPO_OPENAI_API_KEY = os.getenv("LOCAL_TIPO_OPENAI_API_KEY", "EMPTY")
 
 # Inicializar clientes de API
 client_grok = Client(api_key=GROK_API_KEY)
@@ -27,6 +31,10 @@ client_openai = OpenAI(api_key=OPEN_AI_API_KEY)
 client_genai = genai.Client(api_key=GEMINI_API_KEY)
 cliente_maritaca = OpenAI(api_key=MARITACA_API_KEY, base_url="https://chat.maritaca.ai/api")
 client_deepinfra = AsyncOpenAI(api_key=DEEPINFRA_API_KEY, base_url="https://api.deepinfra.com/v1/openai")
+client_local_tipo_openai = AsyncOpenAI(
+    api_key=LOCAL_TIPO_OPENAI_API_KEY,
+    base_url=LOCAL_TIPO_OPENAI_BASE_URL,
+)
     
 
 gemini_semaphore = asyncio.Semaphore(10)
@@ -119,6 +127,13 @@ async def chamar_api_provider(abordagem, modelo, temperatura, system_prompt, use
         chat.append(user(user_prompt))
         grok_resposta = chat.sample()
         response_content = grok_resposta.content
+    elif abordagem in ["local_openai", "sglang"]:
+        local_tipo_openai_resposta = await client_local_tipo_openai.chat.completions.create(
+            model=modelo,
+            temperature=temperatura,
+            messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}]
+        )
+        response_content = local_tipo_openai_resposta.choices[0].message.content
 
     return response_content
 

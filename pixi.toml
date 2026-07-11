@@ -14,6 +14,7 @@ nla-verbalize = "python scripts/run_nla_verbalization.py"
 nla-reconstruct = "python scripts/run_nla_reconstruction.py"
 nla-analyze = "python scripts/analyze_nla_gender_bias.py"
 nla-visualize = "python scripts/visualize_nla_results.py"
+nla-sglang = "python -m sglang.launch_server --model-path checkpoints/nla-qwen2.5-7b-L20-av --port 30001 --dtype bfloat16 --disable-radix-cache --trust-remote-code --max-running-requests 32"
 
 [dependencies]
 python = "3.12.*"
@@ -45,4 +46,7 @@ pyarrow = ">=14.0"
 accelerate = ">=1.10"
 jinja2 = ">=3.1"
 plotly = ">=5.18"
+
+[target.linux-64.pypi-dependencies]
+sglang = { version = ">=0.4.9.post3, <0.5", extras = ["all"] }
 

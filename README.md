@@ -37,9 +37,10 @@ For local models served through SGLang, residual-stream activations can be extra
 1. **Activation extraction** — per-token residual activations at a chosen layer;
 2. **Verbalization** — natural-language explanations of activation vectors via the NLA actor;
 3. **Reconstruction** — critic scoring of how well verbalizations reconstruct the original activations;
-4. **Analysis** — token-local, span-level, and outcome-linked summaries related to gender bias.
+4. **Analysis** — token-local, span-level, and outcome-linked summaries, plus a lean `merged_results.parquet` for reporting;
+5. **Visualization** — static HTML reports with reconstruction plots, keyword contrasts, token timelines, and demographic condition comparisons.
 
-Artifacts are written as parquet files under `artifacts/nla/`.
+Artifacts are written under `artifacts/nla/` (parquet stages, analysis CSVs/merged table, and HTML reports).
 
 ## Repository structure
 
@@ -67,7 +68,8 @@ Artifacts are written as parquet files under `artifacts/nla/`.
 │   ├── extract_nla_activations.py
 │   ├── run_nla_verbalization.py
 │   ├── run_nla_reconstruction.py
-│   └── analyze_nla_gender_bias.py
+│   ├── analyze_nla_gender_bias.py
+│   └── visualize_nla_results.py
 │
 ├── src/
 │   ├── main/
@@ -80,8 +82,11 @@ Artifacts are written as parquet files under `artifacts/nla/`.
 │   │       ├── io.py
 │   │       ├── nla_client.py
 │   │       ├── reconstruction.py
+│   │       ├── report.py
 │   │       ├── schemas.py
-│   │       └── token_annotation.py
+│   │       ├── token_annotation.py
+│   │       ├── visualization.py
+│   │       └── templates/
 │   └── analysis/
 │       ├── preprocessing_undergraduate_fields.ipynb
 │       ├── processing_profile_results.ipynb
@@ -109,7 +114,7 @@ Artifacts are written as parquet files under `artifacts/nla/`.
 - undergraduate_fields_for_profile.yaml: undergraduate-field list used in the profile-generation task;
 - undergraduate_fields_for_recommendation.yaml: undergraduate-field list used in the recommendation task.
 
-NLA run artifacts (activations, verbalizations, reconstructions, analysis CSVs) are written under `artifacts/nla/` and are not committed to the repository. Actor/critic checkpoints are expected under paths such as `checkpoints/` (see `conf/nla_config.yaml`).
+NLA run artifacts (activations, verbalizations, reconstructions, analysis CSVs/`merged_results.parquet`, and HTML reports under `reports/{run_id}/`) are written under `artifacts/nla/` and are not committed to the repository. Actor/critic checkpoints are expected under paths such as `checkpoints/` (see `conf/nla_config.yaml`).
 
 ## Configuration files
 
@@ -142,7 +147,7 @@ NLA run artifacts (activations, verbalizations, reconstructions, analysis CSVs) 
 - verbalization tier and batching (`VERBALIZATION_TIER`, `VERBALIZATION_BATCH_SIZE`, `VERBALIZATION_CONCURRENCY`, `VERBALIZATION_FLUSH_ROWS`);
 - reconstruction batching (`RECONSTRUCTION_BATCH_SIZE`, `RECONSTRUCTION_FLUSH_ROWS`);
 - sampling (`TEMPERATURE`, `MAX_NEW_TOKENS`);
-- artifact directory and optional generation JSONL for outcome-linked analysis.
+- artifact directory and `GENERATION_JSONL` for teacher-forced response activations and outcome-linked analysis.
 
 ## Environment setup
 
@@ -185,7 +190,17 @@ Local models can be served with SGLang and selected in the config via the `local
 
 ### NLA pipeline
 
-Prerequisites: a running SGLang server for the NLA actor, and actor/critic checkpoints at the paths in `nla_config.yaml`.
+Prerequisites: a running SGLang server for the NLA **actor** (`AV_CHECKPOINT`), and actor/critic checkpoints at the paths in `nla_config.yaml`.
+
+Launch the actor server with **`--dtype bfloat16`** (required for `input_embeds` verbalization; SGLang's `--dtype auto` can load float16 weights while casting embeds to bfloat16):
+
+```bash
+pixi run nla-sglang
+# equivalent:
+# python -m sglang.launch_server --model-path checkpoints/nla-qwen2.5-7b-L20-av \
+#   --port 30001 --dtype bfloat16 --disable-radix-cache --trust-remote-code \
+#   --max-running-requests 32
+```
 
 Run the stages in order (Hydra config: `conf/nla_config.yaml`):
 
@@ -194,6 +209,7 @@ pixi run nla-extract
 pixi run nla-verbalize
 pixi run nla-reconstruct
 pixi run nla-analyze
+pixi run nla-visualize
 ```
 
 Equivalent direct invocations:
@@ -203,12 +219,28 @@ python scripts/extract_nla_activations.py
 python scripts/run_nla_verbalization.py
 python scripts/run_nla_reconstruction.py
 python scripts/analyze_nla_gender_bias.py
+python scripts/visualize_nla_results.py
 ```
+
+`nla-extract` teacher-forces assistant tokens from `GENERATION_JSONL` when present, assigning `token_role=generated_output`, and stores full `system_text` / `user_text` / `response_text` on each activation row. Without a matching JSONL row, extraction stays prompt-only.
+
+Verbalization tiers (`VERBALIZATION_TIER`):
+
+- `tier1` — markers ±5 tokens plus the last token of each example;
+- `tier2` — `user_prompt` / `task_instruction` / `answer_space`;
+- `tier3` — all non-`generated_output` tokens (prompt-only);
+- `tier4` — all tokens, including response (`generated_output`).
+
+`RESUME=true` (default) skips already-written `activation_id`s in verbalization and reconstruction, so re-extracting the same `RUN_ID` with response tokens only processes the new IDs.
+
+`nla-analyze` writes summary CSVs and `artifacts/nla/analysis/{run_id}/merged_results.parquet`.  
+`nla-visualize` builds `artifacts/nla/reports/{run_id}/index.html` (figures, keyword tables, per-example token timelines with full prompt/response text, and condition-contrast pages). If the merged parquet is missing, visualize rebuilds it from the stage artifacts.
 
 Override settings from the CLI as needed, for example:
 
 ```bash
-python scripts/run_nla_verbalization.py VERBALIZATION_TIER=tier2 VERBALIZATION_BATCH_SIZE=16
+python scripts/run_nla_verbalization.py VERBALIZATION_TIER=tier4 VERBALIZATION_BATCH_SIZE=16
+python scripts/extract_nla_activations.py RUN_ID=rec_qwen_l20_v1
 ```
 
 `nla_inference.py` is a compatibility shim / smoke-test CLI for `NLAClient` and `NLACritic`:

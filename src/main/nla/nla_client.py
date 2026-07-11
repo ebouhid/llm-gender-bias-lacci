@@ -216,11 +216,48 @@ class NLAClient:
 
         self.sglang_url = sglang_url.rstrip("/")
         self._http = httpx.Client(timeout=httpx.Timeout(120.0))
+        self._check_sglang_dtype(checkpoint_dir)
 
         print(
             f"[NLAClient] {checkpoint_dir.name}: d_model={self.cfg.d_model} "
             f"inj_scale={self.cfg.injection_scale} embed_scale={self.embed_scale:.2f} "
             f"inj_char={self.cfg.injection_char!r}(id={self.cfg.injection_token_id})"
+        )
+
+    def _check_sglang_dtype(self, checkpoint_dir: Path) -> None:
+        """Fail fast if SGLang weights are float16 while input_embeds are forced to bf16."""
+        try:
+            resp = self._http.get(f"{self.sglang_url}/get_server_info")
+            if resp.status_code != 200:
+                return
+            server_dtype = resp.json().get("dtype")
+        except Exception:
+            return
+
+        if not isinstance(server_dtype, str):
+            return
+        if server_dtype.lower() == "bfloat16":
+            return
+        if server_dtype.lower() not in {"auto", "half", "float16"}:
+            return
+
+        hf_cfg = AutoConfig.from_pretrained(
+            str(checkpoint_dir), trust_remote_code=True
+        )
+        torch_dtype = getattr(hf_cfg, "torch_dtype", None)
+        if server_dtype.lower() == "auto" and torch_dtype not in (
+            None,
+            "float16",
+            "half",
+            torch.float16,
+        ):
+            return
+
+        raise RuntimeError(
+            "SGLang server dtype is incompatible with NLA input_embeds: "
+            f"server dtype={server_dtype!r}, checkpoint torch_dtype={torch_dtype!r}. "
+            "SGLang hardcodes input_embeds to bfloat16, so restart the actor "
+            "server with --dtype bfloat16, e.g. `pixi run nla-sglang`."
         )
 
     def _prompt_content(self, prompt: str | None) -> str:

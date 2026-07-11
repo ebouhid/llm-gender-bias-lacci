@@ -13,6 +13,7 @@ nla-extract = "python scripts/extract_nla_activations.py"
 nla-verbalize = "python scripts/run_nla_verbalization.py"
 nla-reconstruct = "python scripts/run_nla_reconstruction.py"
 nla-analyze = "python scripts/analyze_nla_gender_bias.py"
+nla-visualize = "python scripts/visualize_nla_results.py"
 
 [dependencies]
 python = "3.12.*"
@@ -42,4 +43,6 @@ pyyaml = ">=6.0"
 numpy = ">=1.26"
 pyarrow = ">=14.0"
 accelerate = ">=1.10"
+jinja2 = ">=3.1"
+plotly = ">=5.18"
 

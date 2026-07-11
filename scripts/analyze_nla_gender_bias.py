@@ -17,6 +17,7 @@ from src.main.nla.analysis import (
     outcome_linked_summary,
     span_level_summary,
     token_local_contrast,
+    write_merged_results,
 )
 from src.main.nla.ids import make_run_id
 from src.main.nla.io import (
@@ -68,7 +69,9 @@ def main(cfg: DictConfig) -> None:
     span_level.to_csv(out_dir / "span_level_summary.csv", index=False)
     outcome_linked.to_csv(out_dir / "outcome_linked_summary.csv", index=False)
 
-    logger.info("saved analysis CSVs to %s", out_dir)
+    merged_path = write_merged_results(out_dir / "merged_results.parquet", joined)
+    logger.info("saved analysis CSVs and merged table to %s", out_dir)
+    logger.info("merged_results=%s rows=%d", merged_path, len(joined))
 
 
 if __name__ == "__main__":

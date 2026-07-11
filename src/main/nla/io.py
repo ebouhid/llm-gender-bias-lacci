@@ -22,7 +22,7 @@ def artifact_path(artifacts_dir: str | Path, kind: str, run_id: str) -> Path:
 
 def ensure_artifact_dirs(artifacts_dir: str | Path) -> None:
     root = Path(artifacts_dir)
-    for sub in ("activations", "verbalizations", "reconstructions", "analysis"):
+    for sub in ("activations", "verbalizations", "reconstructions", "analysis", "reports"):
         (root / sub).mkdir(parents=True, exist_ok=True)
 
 

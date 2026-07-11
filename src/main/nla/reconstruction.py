@@ -72,25 +72,57 @@ class NLACritic:
             f"d_model={d}  mse_scale={self.mse_scale:.2f}"
         )
 
+    def _last_token_hidden(
+        self, last_hidden_state: torch.Tensor, attention_mask: torch.Tensor
+    ) -> torch.Tensor:
+        seq_lens = attention_mask.sum(dim=1) - 1
+        batch_idx = torch.arange(
+            last_hidden_state.shape[0], device=last_hidden_state.device
+        )
+        return last_hidden_state[batch_idx, seq_lens]
+
+    def _score_tensors(
+        self, pred: torch.Tensor, gold: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        pred_n = pred / pred.norm(dim=-1, keepdim=True).clamp_min(1e-12) * self.mse_scale
+        gold_n = gold / gold.norm(dim=-1, keepdim=True).clamp_min(1e-12) * self.mse_scale
+        mse = ((pred_n - gold_n) ** 2).mean(dim=-1)
+        cos = (pred_n * gold_n).sum(dim=-1) / (
+            pred_n.norm(dim=-1) * gold_n.norm(dim=-1)
+        ).clamp_min(1e-12)
+        return mse, cos
+
+    @torch.inference_mode()
+    def reconstruct_batch(self, explanations: list[str]) -> torch.Tensor:
+        if not explanations:
+            return torch.empty(0)
+
+        prompts = [self.template.format(explanation=e) for e in explanations]
+        encoded = self.tokenizer(
+            prompts,
+            return_tensors="pt",
+            padding=True,
+            add_special_tokens=True,
+        ).to(self.device)
+        h = self.backbone.model(
+            encoded["input_ids"],
+            attention_mask=encoded["attention_mask"],
+            use_cache=False,
+        ).last_hidden_state
+        last_h = self._last_token_hidden(h, encoded["attention_mask"])
+        return self.value_head(last_h).float().cpu()
+
     @torch.inference_mode()
     def reconstruct(self, explanation: str) -> torch.Tensor:
-        prompt = self.template.format(explanation=explanation)
-        ids = self.tokenizer(
-            prompt, return_tensors="pt", add_special_tokens=True
-        )["input_ids"].to(self.device)
-        h = self.backbone.model(ids, use_cache=False).last_hidden_state[0, -1]
-        return self.value_head(h).float().cpu()
+        return self.reconstruct_batch([explanation])[0]
 
     def score(
         self, explanation: str, original: np.ndarray | torch.Tensor
     ) -> tuple[float, float]:
         pred = self.reconstruct(explanation)
         gold = torch.as_tensor(np.asarray(original, dtype=np.float32))
-        pred_n = pred / pred.norm().clamp_min(1e-12) * self.mse_scale
-        gold_n = gold / gold.norm().clamp_min(1e-12) * self.mse_scale
-        mse = ((pred_n - gold_n) ** 2).mean().item()
-        cos = (pred_n @ gold_n / (pred_n.norm() * gold_n.norm())).item()
-        return mse, cos
+        mse, cos = self._score_tensors(pred.unsqueeze(0), gold.unsqueeze(0))
+        return mse.item(), cos.item()
 
     def score_with_norms(
         self, explanation: str, original: np.ndarray | torch.Tensor
@@ -98,7 +130,32 @@ class NLACritic:
         """Return (mse, cosine, original_norm, reconstructed_norm)."""
         pred = self.reconstruct(explanation)
         gold = torch.as_tensor(np.asarray(original, dtype=np.float32))
-        original_norm = gold.norm().item()
-        reconstructed_norm = pred.norm().item()
-        mse, cos = self.score(explanation, original)
-        return mse, cos, original_norm, reconstructed_norm
+        mse, cos = self._score_tensors(pred.unsqueeze(0), gold.unsqueeze(0))
+        return (
+            mse.item(),
+            cos.item(),
+            gold.norm().item(),
+            pred.norm().item(),
+        )
+
+    def score_batch_with_norms(
+        self,
+        explanations: list[str],
+        originals: list[np.ndarray | torch.Tensor],
+    ) -> list[tuple[float, float, float, float]]:
+        preds = self.reconstruct_batch(explanations)
+        gold = torch.stack(
+            [torch.as_tensor(np.asarray(o, dtype=np.float32)) for o in originals]
+        )
+        mse, cos = self._score_tensors(preds, gold)
+        original_norms = gold.norm(dim=-1)
+        reconstructed_norms = preds.norm(dim=-1)
+        return [
+            (
+                mse[i].item(),
+                cos[i].item(),
+                original_norms[i].item(),
+                reconstructed_norms[i].item(),
+            )
+            for i in range(len(explanations))
+        ]

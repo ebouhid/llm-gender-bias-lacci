@@ -5,23 +5,24 @@ from __future__ import annotations
 
 import logging
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import hydra
 from omegaconf import DictConfig
-import pandas as pd
 from tqdm import tqdm
 
+from src.main.nla.activation_extraction import _resolve_dtype
 from src.main.nla.ids import make_run_id
 from src.main.nla.io import (
+    append_reconstructions_parquet,
     artifact_path,
     ensure_artifact_dirs,
     read_activations_parquet,
     read_reconstructions_parquet,
     read_verbalizations_parquet,
-    write_reconstructions_parquet,
 )
 from src.main.nla.reconstruction import NLACritic
 
@@ -35,6 +36,8 @@ def main(cfg: DictConfig) -> None:
 
     run_id = make_run_id(cfg.get("RUN_ID"))
     resume = bool(cfg.get("RESUME", True))
+    batch_size = max(1, int(cfg.get("RECONSTRUCTION_BATCH_SIZE", 32)))
+    flush_rows = max(batch_size, int(cfg.get("RECONSTRUCTION_FLUSH_ROWS", 512)))
     artifacts_dir = REPO_ROOT / cfg.ARTIFACTS_DIR
     ensure_artifact_dirs(artifacts_dir)
 
@@ -67,33 +70,73 @@ def main(cfg: DictConfig) -> None:
         logger.info("nothing to reconstruct")
         return
 
-    critic = NLACritic(cfg.AR_CHECKPOINT, device=cfg.DEVICE)
+    critic = NLACritic(
+        cfg.AR_CHECKPOINT,
+        device=cfg.DEVICE,
+        dtype=_resolve_dtype(cfg.DTYPE),
+    )
 
-    rows: list[dict] = []
-    for _, row in tqdm(joined.iterrows(), total=len(joined), desc="reconstruct"):
-        mse, cos, original_norm, reconstructed_norm = critic.score_with_norms(
-            row["nla_explanation"],
-            row["activation_vector"],
+    activation_ids = joined["activation_id"].tolist()
+    explanations = joined["nla_explanation"].tolist()
+    vectors = joined["activation_vector"].tolist()
+    ar_checkpoint = str(cfg.AR_CHECKPOINT)
+
+    chunks = [
+        (
+            activation_ids[start : start + batch_size],
+            explanations[start : start + batch_size],
+            vectors[start : start + batch_size],
         )
-        rows.append(
+        for start in range(0, len(activation_ids), batch_size)
+    ]
+    logger.info(
+        "reconstruction batch_size=%d flush_rows=%d chunks=%d",
+        batch_size,
+        flush_rows,
+        len(chunks),
+    )
+
+    buffer: list[dict] = []
+    completed_items = 0
+    t_start = time.perf_counter()
+
+    def flush_buffer() -> None:
+        nonlocal buffer
+        if buffer:
+            append_reconstructions_parquet(recon_path, buffer)
+            buffer = []
+
+    for chunk_ids, chunk_explanations, chunk_vectors in tqdm(
+        chunks, desc="reconstruct"
+    ):
+        scores = critic.score_batch_with_norms(chunk_explanations, chunk_vectors)
+        buffer.extend(
             {
-                "activation_id": row["activation_id"],
-                "nla_ar_checkpoint": str(cfg.AR_CHECKPOINT),
+                "activation_id": activation_id,
+                "nla_ar_checkpoint": ar_checkpoint,
                 "reconstruction_mse": mse,
                 "reconstruction_cosine": cos,
                 "original_norm": original_norm,
                 "reconstructed_norm": reconstructed_norm,
             }
+            for activation_id, (mse, cos, original_norm, reconstructed_norm) in zip(
+                chunk_ids, scores
+            )
         )
+        completed_items += len(chunk_ids)
+        if len(buffer) >= flush_rows:
+            flush_buffer()
 
-    if resume and recon_path.exists():
-        existing = read_reconstructions_parquet(recon_path)
-        combined = pd.concat(
-            [existing, pd.DataFrame(rows)], ignore_index=True
-        ).drop_duplicates(subset=["activation_id"], keep="last")
-        rows = combined.to_dict(orient="records")
+    flush_buffer()
 
-    write_reconstructions_parquet(recon_path, rows)
+    elapsed = time.perf_counter() - t_start
+    if completed_items:
+        logger.info(
+            "reconstructed %d items in %.1fs (%.2fs/item)",
+            completed_items,
+            elapsed,
+            elapsed / completed_items,
+        )
     logger.info("saved reconstructions to %s", recon_path)
 
 

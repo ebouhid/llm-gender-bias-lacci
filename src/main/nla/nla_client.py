@@ -223,51 +223,78 @@ class NLAClient:
             f"inj_char={self.cfg.injection_char!r}(id={self.cfg.injection_token_id})"
         )
 
-    def _build_embeds(
-        self, v_raw: torch.Tensor, prompt_content: str | None
-    ) -> tuple[np.ndarray, int]:
-        if prompt_content is None:
-            content = self.cfg.actor_prompt_template.format(
+    def _prompt_content(self, prompt: str | None) -> str:
+        if prompt is None:
+            return self.cfg.actor_prompt_template.format(
                 injection_char=self.cfg.injection_char
             )
-        else:
-            assert INJECT_PLACEHOLDER in prompt_content
-            content = prompt_content.replace(
-                INJECT_PLACEHOLDER, self.cfg.injection_char
-            )
+        assert INJECT_PLACEHOLDER in prompt
+        return prompt.replace(INJECT_PLACEHOLDER, self.cfg.injection_char)
 
+    def _build_embeds_batch(
+        self,
+        activations: list[torch.Tensor],
+        prompt: str | None = None,
+    ) -> list[np.ndarray]:
+        if not activations:
+            return []
+
+        content = self._prompt_content(prompt)
         input_ids = _ids_from_chat_template(
             self.tokenizer, [{"role": "user", "content": content}]
         )
-        ids_t = torch.tensor(input_ids, dtype=torch.long).unsqueeze(0)
+        batch_size = len(activations)
+        ids_t = torch.tensor(input_ids, dtype=torch.long).unsqueeze(0).expand(
+            batch_size, -1
+        )
+
+        vectors = torch.stack(
+            [
+                torch.as_tensor(np.asarray(a, dtype=np.float32)).view(-1)
+                for a in activations
+            ]
+        )
+        assert vectors.shape == (batch_size, self.cfg.d_model), (
+            f"expected vectors ({batch_size}, {self.cfg.d_model}), "
+            f"got {tuple(vectors.shape)}"
+        )
+        assert torch.isfinite(vectors).all(), "activation has NaN/Inf"
+        v_scaled = normalize_activation(vectors.float(), self.cfg.injection_scale)
 
         with torch.no_grad():
             embeds = (
                 self.embed(ids_t.to(self.embed.weight.device)) * self.embed_scale
-            ).float()
-
-        assert torch.isfinite(v_raw).all(), "activation has NaN/Inf"
-        v_scaled = normalize_activation(
-            v_raw.float().view(1, -1), self.cfg.injection_scale
-        )
+            ).float().cpu()
 
         injected = inject_at_marked_positions(
             ids_t,
-            embeds.cpu(),
+            embeds,
             v_scaled,
             self.cfg.injection_token_id,
             self.cfg.injection_left_neighbor_id,
             self.cfg.injection_right_neighbor_id,
         )
-        return injected[0].contiguous().numpy(), len(input_ids)
+        return [injected[i].contiguous().numpy() for i in range(batch_size)]
+
+    def _build_embeds(
+        self, v_raw: torch.Tensor, prompt: str | None
+    ) -> tuple[np.ndarray, int]:
+        content = self._prompt_content(prompt)
+        input_ids = _ids_from_chat_template(
+            self.tokenizer, [{"role": "user", "content": content}]
+        )
+        return self._build_embeds_batch([v_raw], prompt)[0], len(input_ids)
 
     def _sglang_generate(
-        self, embeds_np: np.ndarray, **sampling: object
-    ) -> dict[str, Any]:
+        self,
+        embeds: np.ndarray | list[np.ndarray],
+        **sampling: object,
+    ) -> dict[str, Any] | list[dict[str, Any]]:
+        is_batch = isinstance(embeds, list)
         sp = {"temperature": 1.0, "max_new_tokens": 200, "skip_special_tokens": False}
         sp.update(sampling)
         body = orjson.dumps(
-            {"input_embeds": embeds_np, "sampling_params": sp},
+            {"input_embeds": embeds, "sampling_params": sp},
             option=orjson.OPT_SERIALIZE_NUMPY,
         )
         resp = self._http.post(
@@ -275,9 +302,29 @@ class NLAClient:
             content=body,
             headers={"Content-Type": "application/json"},
         )
-        resp.raise_for_status()
+        if resp.status_code >= 400:
+            detail = resp.text[:500]
+            raise httpx.HTTPStatusError(
+                f"SGLang /generate failed ({resp.status_code}): {detail}",
+                request=resp.request,
+                response=resp,
+            )
         out = resp.json()
+        if is_batch:
+            return out if isinstance(out, list) else [out]
         return out[0] if isinstance(out, list) else out
+
+    def _extract_explanation(self, text: str, extract_explanation: bool) -> str:
+        if not extract_explanation:
+            return text
+        m = EXPLANATION_RE.search(text)
+        if m is None:
+            print(
+                f"[NLAClient] WARNING: no <explanation> tags. "
+                f"Raw[:200]={text[:200]!r}"
+            )
+            return text
+        return m.group(1).strip()
 
     def generate(
         self,
@@ -297,16 +344,9 @@ class NLAClient:
         out = self._sglang_generate(embeds_np, **sampling)
         text = out["text"]
 
-        if return_raw or not extract_explanation:
+        if return_raw:
             return text
-        m = EXPLANATION_RE.search(text)
-        if m is None:
-            print(
-                f"[NLAClient] WARNING: no <explanation> tags. "
-                f"Raw[:200]={text[:200]!r}"
-            )
-            return text
-        return m.group(1).strip()
+        return self._extract_explanation(text, extract_explanation)
 
     def generate_with_raw(
         self,
@@ -321,16 +361,7 @@ class NLAClient:
         embeds_np, _ = self._build_embeds(v, prompt)
         out = self._sglang_generate(embeds_np, **sampling)
         raw = out["text"]
-        if not extract_explanation:
-            return raw, raw
-        m = EXPLANATION_RE.search(raw)
-        if m is None:
-            print(
-                f"[NLAClient] WARNING: no <explanation> tags. "
-                f"Raw[:200]={raw[:200]!r}"
-            )
-            return raw, raw
-        return m.group(1).strip(), raw
+        return self._extract_explanation(raw, extract_explanation), raw
 
     def generate_batch(
         self,
@@ -340,12 +371,52 @@ class NLAClient:
         extract_explanation: bool = True,
         **sampling: object,
     ) -> list[str]:
-        return [
-            self.generate(
-                v,
-                prompt=prompt,
-                extract_explanation=extract_explanation,
-                **sampling,
+        tensors = [
+            torch.as_tensor(np.asarray(a, dtype=np.float32))
+            for a in activations
+        ]
+        if not tensors:
+            return []
+        for v in tensors:
+            assert v.numel() == self.cfg.d_model, (
+                f"activation length {v.numel()} != d_model {self.cfg.d_model}"
             )
-            for v in activations
+
+        embeds_list = self._build_embeds_batch(tensors, prompt)
+        outs = self._sglang_generate(embeds_list, **sampling)
+        assert len(outs) == len(tensors), (
+            f"SGLang returned {len(outs)} outputs for batch of {len(tensors)}"
+        )
+        return [
+            self._extract_explanation(out["text"], extract_explanation)
+            for out in outs
+        ]
+
+    def generate_batch_with_raw(
+        self,
+        activations: Iterable[Iterable[float] | np.ndarray | torch.Tensor],
+        *,
+        prompt: str | None = None,
+        extract_explanation: bool = True,
+        **sampling: object,
+    ) -> list[tuple[str, str]]:
+        tensors = [
+            torch.as_tensor(np.asarray(a, dtype=np.float32))
+            for a in activations
+        ]
+        if not tensors:
+            return []
+        for v in tensors:
+            assert v.numel() == self.cfg.d_model, (
+                f"activation length {v.numel()} != d_model {self.cfg.d_model}"
+            )
+
+        embeds_list = self._build_embeds_batch(tensors, prompt)
+        outs = self._sglang_generate(embeds_list, **sampling)
+        assert len(outs) == len(tensors), (
+            f"SGLang returned {len(outs)} outputs for batch of {len(tensors)}"
+        )
+        return [
+            (self._extract_explanation(out["text"], extract_explanation), out["text"])
+            for out in outs
         ]

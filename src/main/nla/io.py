@@ -131,6 +131,20 @@ def read_reconstructions_parquet(path: str | Path) -> pd.DataFrame:
     return pd.read_parquet(path)
 
 
+def append_reconstructions_parquet(path: str | Path, rows: list[dict]) -> None:
+    if not rows:
+        return
+    existing = read_reconstructions_parquet(path)
+    new_df = pd.DataFrame(rows)
+    for col in RECONSTRUCTION_COLUMNS:
+        if col not in new_df.columns:
+            new_df[col] = None
+    new_df = new_df[list(RECONSTRUCTION_COLUMNS)]
+    combined = pd.concat([existing, new_df], ignore_index=True)
+    combined = combined.drop_duplicates(subset=["activation_id"], keep="last")
+    write_reconstructions_parquet(path, combined.to_dict(orient="records"))
+
+
 def select_verbalization_subset(df: pd.DataFrame, tier: str) -> pd.DataFrame:
     if tier == "tier4":
         return df.copy()

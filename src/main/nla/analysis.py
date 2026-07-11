@@ -31,7 +31,12 @@ def parse_condition_race(marcador_codigo: str | None) -> str:
     return "sem_cor_declarada"
 
 
-def _format_prompt(system: dict, user: dict) -> str:
+def format_full_prompt(system_text: str, user_text: str) -> str:
+    """Format stored system/user texts for report display."""
+    return f"[system]\n{system_text}\n\n[user]\n{user_text}"
+
+
+def _format_prompt_fallback(system: dict, user: dict) -> str:
     """Build a short display prompt from nested generation JSONL fields."""
     marcador = system.get("marcador_descricao") or system.get("marcador") or ""
     disciplina = user.get("disciplina_descricao") or user.get("disciplina") or ""
@@ -60,7 +65,7 @@ def _parse_jsonl_generation(path: str | Path) -> pd.DataFrame:
                     "repeticao": record.get("repeticao"),
                     "marcador_codigo": system.get("marcador_codigo"),
                     "disciplina_codigo": user.get("disciplina_codigo"),
-                    "prompt": _format_prompt(system, user),
+                    "prompt": _format_prompt_fallback(system, user),
                     "model_output": record.get("resposta_raw"),
                     "resposta_raw": record.get("resposta_raw"),
                 }
@@ -75,6 +80,39 @@ def _extract_areas(resposta_raw: str) -> str:
         return " | ".join(areas) if isinstance(areas, list) else ""
     except (json.JSONDecodeError, TypeError):
         return ""
+
+
+def _nonempty_str_mask(series: pd.Series) -> pd.Series:
+    return series.notna() & series.astype(str).str.strip().ne("")
+
+
+def enrich_prompt_and_output_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Prefer full system/user/response text from activations when available."""
+    out = df.copy()
+    if "system_text" in out.columns and "user_text" in out.columns:
+        has_full = _nonempty_str_mask(out["system_text"]) & _nonempty_str_mask(
+            out["user_text"]
+        )
+        if has_full.any():
+            out.loc[has_full, "prompt"] = [
+                format_full_prompt(sys_t, usr_t)
+                for sys_t, usr_t in zip(
+                    out.loc[has_full, "system_text"].astype(str),
+                    out.loc[has_full, "user_text"].astype(str),
+                )
+            ]
+    if "response_text" in out.columns:
+        has_resp = _nonempty_str_mask(out["response_text"])
+        if has_resp.any():
+            out.loc[has_resp, "model_output"] = out.loc[has_resp, "response_text"]
+            if "resposta_raw" not in out.columns:
+                out.loc[has_resp, "resposta_raw"] = out.loc[has_resp, "response_text"]
+            else:
+                missing_raw = has_resp & ~_nonempty_str_mask(out["resposta_raw"])
+                out.loc[missing_raw, "resposta_raw"] = out.loc[
+                    missing_raw, "response_text"
+                ]
+    return out
 
 
 def enrich_condition_columns(df: pd.DataFrame) -> pd.DataFrame:
@@ -104,12 +142,23 @@ def build_joined_table(
             how="left",
         )
 
+    joined = enrich_prompt_and_output_columns(joined)
+    if "areas_recomendadas" not in joined.columns and "resposta_raw" in joined.columns:
+        joined["areas_recomendadas"] = joined["resposta_raw"].map(_extract_areas)
+    elif "areas_recomendadas" in joined.columns and "resposta_raw" in joined.columns:
+        missing_areas = ~_nonempty_str_mask(joined["areas_recomendadas"])
+        if missing_areas.any():
+            joined.loc[missing_areas, "areas_recomendadas"] = joined.loc[
+                missing_areas, "resposta_raw"
+            ].map(_extract_areas)
+
     return enrich_condition_columns(joined)
 
 
 def prepare_merged_results(joined: pd.DataFrame) -> pd.DataFrame:
     """Drop heavy/raw columns for the persisted visualization table."""
     out = enrich_condition_columns(joined)
+    out = enrich_prompt_and_output_columns(out)
     drop_cols = [c for c in _DROP_FOR_MERGED if c in out.columns]
     if drop_cols:
         out = out.drop(columns=drop_cols)

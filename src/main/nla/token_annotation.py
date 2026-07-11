@@ -60,6 +60,8 @@ def annotate_token_roles(
     system_text: str,
     user_text: str,
     marcador_descricao: str,
+    response_text: str | None = None,
+    prompt_token_count: int | None = None,
 ) -> list[dict]:
     """Return per-token metadata: token_id, token_str, token_role, char offsets."""
     full_text = tokenizer.decode(input_ids)
@@ -68,6 +70,7 @@ def annotate_token_roles(
     system_span = _find_span(full_text, system_text)
     user_span = _find_span(full_text, user_text)
     marker_span = _find_span(full_text, marcador_descricao.strip()) if marcador_descricao else None
+    response_span = _find_span(full_text, response_text) if response_text else None
 
     answer_space_span = None
     answer_idx = user_text.find(ANSWER_SPACE_START)
@@ -114,6 +117,10 @@ def annotate_token_roles(
             role = "system_prompt"
         elif user_span and _overlaps(char_start, char_end, *user_span):
             role = "user_prompt"
+        elif response_span and _overlaps(char_start, char_end, *response_span):
+            role = "generated_output"
+        elif prompt_token_count is not None and token_index >= prompt_token_count:
+            role = "generated_output"
         else:
             role = "user_prompt"
 

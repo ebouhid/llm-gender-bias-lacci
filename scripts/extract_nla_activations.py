@@ -29,6 +29,7 @@ def main(cfg: DictConfig) -> None:
     ensure_artifact_dirs(artifacts_dir)
 
     logger.info("run_id=%s base_model=%s layer=%s", run_id, cfg.BASE_MODEL, cfg.NLA_LAYER)
+    gen_path = REPO_ROOT / cfg.GENERATION_JSONL if cfg.get("GENERATION_JSONL") else None
     rows = extract_all_activations(
         cfg=cfg,
         run_id=run_id,
@@ -36,6 +37,7 @@ def main(cfg: DictConfig) -> None:
         nla_layer=int(cfg.NLA_LAYER),
         device=cfg.DEVICE,
         dtype_name=cfg.DTYPE,
+        generation_jsonl=gen_path,
     )
     logger.info("extracted %d token activation rows", len(rows))
 

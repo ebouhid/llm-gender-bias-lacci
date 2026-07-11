@@ -17,6 +17,9 @@ ACTIVATION_COLUMNS: Final[tuple[str, ...]] = (
     "marcador_codigo",
     "disciplina_codigo",
     "prompt_hash",
+    "system_text",
+    "user_text",
+    "response_text",
     "base_model",
     "nla_layer",
     "token_index",
@@ -83,3 +86,4 @@ class ExampleContext:
     system_text: str
     user_text: str
     marcador_descricao: str
+    response_text: str | None = None

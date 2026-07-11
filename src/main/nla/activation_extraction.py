@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import itertools
+import json
+import logging
+from pathlib import Path
 from typing import Any
 
 import torch
@@ -18,6 +21,10 @@ from src.main.nla.schemas import ExampleContext
 from src.main.nla.token_annotation import annotate_token_roles
 from src.main.template_expansion import expandir_templates_v2
 
+logger = logging.getLogger(__name__)
+
+GenerationKey = tuple[str, float, int, str, str]
+
 
 def _resolve_dtype(dtype_name: str) -> torch.dtype:
     mapping = {
@@ -30,14 +37,54 @@ def _resolve_dtype(dtype_name: str) -> torch.dtype:
     return mapping[dtype_name]
 
 
-def build_example_contexts(cfg: Any, run_id: str) -> list[ExampleContext]:
+def load_generation_responses(path: str | Path | None) -> dict[GenerationKey, str]:
+    """Load resposta_raw keyed by modelo/temperatura/repeticao/marcador/disciplina."""
+    if path is None:
+        return {}
+    path = Path(path)
+    if not path.exists():
+        logger.warning("GENERATION_JSONL not found: %s", path)
+        return {}
+
+    mapping: dict[GenerationKey, str] = {}
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            record = json.loads(line)
+            system = record.get("system_prompt", {}) or {}
+            user = record.get("user_prompt", {}) or {}
+            if not isinstance(system, dict):
+                system = {}
+            if not isinstance(user, dict):
+                user = {}
+            resposta = record.get("resposta_raw")
+            if resposta is None:
+                continue
+            key: GenerationKey = (
+                str(record.get("modelo") or ""),
+                float(record.get("temperatura")),
+                int(record.get("repeticao")),
+                str(system.get("marcador_codigo") or ""),
+                str(user.get("disciplina_codigo") or ""),
+            )
+            mapping[key] = str(resposta)
+    logger.info("loaded %d generation responses from %s", len(mapping), path)
+    return mapping
+
+
+def build_example_contexts(
+    cfg: Any,
+    run_id: str,
+    generation_responses: dict[GenerationKey, str] | None = None,
+) -> list[ExampleContext]:
     system_expandidos = expandir_templates_v2(
         cfg.SYSTEM_PROMPT, cfg.CHAVES_SYSTEM_PROMPT
     )
     prompt_expandidos = expandir_templates_v2(cfg.PROMPTS, cfg.CHAVES_PROMPT)
     num_repeticoes = cfg.get("REPETICOES_POR_TEMP", 1)
+    responses = generation_responses or {}
 
     contexts: list[ExampleContext] = []
+    missing_responses = 0
     for system, prompt, modelo, temperatura, repeticao in itertools.product(
         system_expandidos,
         prompt_expandidos,
@@ -54,6 +101,17 @@ def build_example_contexts(cfg: Any, run_id: str) -> list[ExampleContext]:
         marcador_codigo = system_keys.get("marcador_codigo", "")
         disciplina_codigo = user_keys.get("disciplina_codigo", "")
         marcador_descricao = system_keys.get("marcador_descricao", "")
+
+        key: GenerationKey = (
+            str(model_name),
+            float(temperatura),
+            int(repeticao),
+            str(marcador_codigo),
+            str(disciplina_codigo),
+        )
+        response_text = responses.get(key)
+        if responses and response_text is None:
+            missing_responses += 1
 
         example_id = make_example_id(
             model_name,
@@ -76,26 +134,45 @@ def build_example_contexts(cfg: Any, run_id: str) -> list[ExampleContext]:
                 system_text=system_text,
                 user_text=user_text,
                 marcador_descricao=marcador_descricao,
+                response_text=response_text,
             )
+        )
+    if missing_responses:
+        logger.warning(
+            "%d example(s) missing a matching GENERATION_JSONL response",
+            missing_responses,
         )
     return contexts
 
 
-def tokenize_prompt(tokenizer, system_text: str, user_text: str) -> list[int]:
+def _as_id_list(result) -> list[int]:
+    if isinstance(result, list):
+        return result
+    if hasattr(result, "input_ids"):
+        return list(result.input_ids)
+    return list(result)
+
+
+def tokenize_prompt(
+    tokenizer,
+    system_text: str,
+    user_text: str,
+    response_text: str | None = None,
+) -> list[int]:
     messages = [
         {"role": "system", "content": system_text},
         {"role": "user", "content": user_text},
     ]
-    result = tokenizer.apply_chat_template(
-        messages, tokenize=True, add_generation_prompt=True
-    )
-    if isinstance(result, list):
-        input_ids = result
-    elif hasattr(result, "input_ids"):
-        input_ids = result.input_ids
+    if response_text is not None:
+        messages.append({"role": "assistant", "content": response_text})
+        result = tokenizer.apply_chat_template(
+            messages, tokenize=True, add_generation_prompt=False
+        )
     else:
-        input_ids = list(result)
-    return input_ids
+        result = tokenizer.apply_chat_template(
+            messages, tokenize=True, add_generation_prompt=True
+        )
+    return _as_id_list(result)
 
 
 def extract_activation_rows(
@@ -106,7 +183,19 @@ def extract_activation_rows(
     base_model: str,
     nla_layer: int,
 ) -> list[dict]:
-    input_ids = tokenize_prompt(tokenizer, context.system_text, context.user_text)
+    prompt_ids = tokenize_prompt(tokenizer, context.system_text, context.user_text)
+    if context.response_text is not None:
+        input_ids = tokenize_prompt(
+            tokenizer,
+            context.system_text,
+            context.user_text,
+            context.response_text,
+        )
+        prompt_token_count = len(prompt_ids)
+    else:
+        input_ids = prompt_ids
+        prompt_token_count = None
+
     ids_tensor = torch.tensor([input_ids], dtype=torch.long, device=model.device)
 
     with torch.inference_mode():
@@ -119,8 +208,11 @@ def extract_activation_rows(
         system_text=context.system_text,
         user_text=context.user_text,
         marcador_descricao=context.marcador_descricao,
+        response_text=context.response_text,
+        prompt_token_count=prompt_token_count,
     )
 
+    response_text = context.response_text if context.response_text is not None else ""
     rows: list[dict] = []
     for meta in token_meta:
         token_index = meta["token_index"]
@@ -143,6 +235,9 @@ def extract_activation_rows(
                 "marcador_codigo": context.marcador_codigo,
                 "disciplina_codigo": context.disciplina_codigo,
                 "prompt_hash": context.prompt_hash,
+                "system_text": context.system_text,
+                "user_text": context.user_text,
+                "response_text": response_text,
                 "base_model": base_model,
                 "nla_layer": nla_layer,
                 "token_index": token_index,
@@ -179,8 +274,11 @@ def extract_all_activations(
     nla_layer: int,
     device: str,
     dtype_name: str,
+    generation_jsonl: str | Path | None = None,
 ) -> list[dict]:
-    contexts = build_example_contexts(cfg, run_id)
+    path = generation_jsonl if generation_jsonl is not None else cfg.get("GENERATION_JSONL")
+    responses = load_generation_responses(path)
+    contexts = build_example_contexts(cfg, run_id, responses)
     model, tokenizer = load_extraction_model(base_model, device, dtype_name)
 
     all_rows: list[dict] = []

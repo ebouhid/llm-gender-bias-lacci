@@ -22,8 +22,12 @@ MAX_NEW_TOKENS: 200
 
 ARTIFACTS_DIR: "artifacts/nla"
 
-# Optional path for outcome-linked analysis join
+# Path for outcome-linked analysis join and teacher-forced response activations
 GENERATION_JSONL: "data/generated_recommendations.jsonl"
+
+# Report caps (null = all examples for sample pages)
+REPORT_MAX_SAMPLES: null
+REPORT_MAX_TABLE_ROWS: 2000
 
 RUN_ID: null
 

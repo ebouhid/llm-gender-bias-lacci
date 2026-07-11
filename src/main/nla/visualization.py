@@ -376,6 +376,8 @@ def _example_summary_panel(example_df: pd.DataFrame) -> str:
         f"<strong>race:</strong> {html.escape(str(meta.get('condition_race', '')))}</p>"
         f"<p><strong>mean MSE:</strong> {mse_mean:.4f}<br>"
         f"<strong>mean cosine:</strong> {cos_mean:.4f}</p>"
+        f"<p><strong>prompt:</strong></p>"
+        f"<pre>{html.escape(str(meta.get('prompt') or ''))}</pre>"
         f"<p><strong>output:</strong></p>"
         f"<pre>{html.escape(str(meta.get('model_output') or meta.get('resposta_raw') or ''))}</pre>"
         f"<p><strong>sample explanation:</strong></p>"

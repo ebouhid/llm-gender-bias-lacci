@@ -100,6 +100,13 @@ table.inspect th:hover { background: #e4ddd2; }
   font-family: "IBM Plex Mono", ui-monospace, monospace;
   font-size: 0.9rem;
 }
+.tokens a.token.role-special_token { background: #ececec; color: #666; }
+.tokens a.token.role-system_prompt { background: #e8eef5; }
+.tokens a.token.role-user_prompt { background: #e7efe8; }
+.tokens a.token.role-demographic_marker { background: #f5e6d3; border-color: #c9956a; }
+.tokens a.token.role-task_instruction { background: #e6f0ea; }
+.tokens a.token.role-answer_space { background: #efe8f5; }
+.tokens a.token.role-generated_output { background: #fde8e8; border-color: #c97a7a; }
 .tokens a.token:hover, .tokens a.token:target {
   outline: 2px solid var(--accent);
 }

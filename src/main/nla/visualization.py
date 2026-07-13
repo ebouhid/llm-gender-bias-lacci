@@ -302,7 +302,30 @@ def make_token_timeline_html(example_df: pd.DataFrame) -> str:
     meta = ordered.iloc[0]
     prompt = html.escape(str(meta.get("prompt") or ""))
     output = html.escape(str(meta.get("model_output") or meta.get("resposta_raw") or ""))
-    areas = html.escape(str(meta.get("areas_recomendadas") or ""))
+    areas = str(meta.get("areas_recomendadas") or "").strip()
+    if areas:
+        outcome_html = f"<p><strong>areas:</strong> {html.escape(areas)}</p>"
+    else:
+        profile_bits = []
+        for key, label in (
+            ("sexo_atribuido", "sexo"),
+            ("cor_ou_raca", "cor/raça"),
+            ("nome", "nome"),
+            ("idade", "idade"),
+            ("estado", "estado"),
+            ("renda_mensal", "renda"),
+        ):
+            value = meta.get(key)
+            if value is None or (isinstance(value, float) and pd.isna(value)):
+                continue
+            text = str(value).strip()
+            if text:
+                profile_bits.append(
+                    f"<strong>{label}:</strong> {html.escape(text)}"
+                )
+        outcome_html = (
+            f"<p>{' | '.join(profile_bits)}</p>" if profile_bits else ""
+        )
 
     chips = []
     details = []
@@ -343,7 +366,7 @@ def make_token_timeline_html(example_df: pd.DataFrame) -> str:
         f"| <strong>race:</strong> {html.escape(str(meta.get('condition_race', '')))}</p>"
         f'<div class="prompt-block"><h3>Prompt</h3><pre>{prompt}</pre></div>'
         f'<div class="output-block"><h3>Model output</h3><pre>{output}</pre>'
-        f"<p><strong>areas:</strong> {areas}</p></div>"
+        f"{outcome_html}</div>"
         f'<div class="token-strip"><h3>Tokens</h3><p class="tokens">'
         + " ".join(chips)
         + "</p></div>"

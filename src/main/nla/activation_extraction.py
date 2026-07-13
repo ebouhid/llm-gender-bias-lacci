@@ -11,6 +11,7 @@ from typing import Any
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
+from src.main.nla.conditions import resolve_condition_keys
 from src.main.nla.ids import (
     make_activation_id,
     make_condition_id,
@@ -59,12 +60,15 @@ def load_generation_responses(path: str | Path | None) -> dict[GenerationKey, st
             resposta = record.get("resposta_raw")
             if resposta is None:
                 continue
+            marcador_codigo, disciplina_codigo, _ = resolve_condition_keys(
+                system, user
+            )
             key: GenerationKey = (
                 str(record.get("modelo") or ""),
                 float(record.get("temperatura")),
                 int(record.get("repeticao")),
-                str(system.get("marcador_codigo") or ""),
-                str(user.get("disciplina_codigo") or ""),
+                marcador_codigo,
+                disciplina_codigo,
             )
             mapping[key] = str(resposta)
     logger.info("loaded %d generation responses from %s", len(mapping), path)
@@ -98,16 +102,16 @@ def build_example_contexts(
         system_keys = system["chaves_usadas"]
         user_keys = prompt["chaves_usadas"]
 
-        marcador_codigo = system_keys.get("marcador_codigo", "")
-        disciplina_codigo = user_keys.get("disciplina_codigo", "")
-        marcador_descricao = system_keys.get("marcador_descricao", "")
+        marcador_codigo, disciplina_codigo, marcador_descricao = (
+            resolve_condition_keys(system_keys, user_keys)
+        )
 
         key: GenerationKey = (
             str(model_name),
             float(temperatura),
             int(repeticao),
-            str(marcador_codigo),
-            str(disciplina_codigo),
+            marcador_codigo,
+            disciplina_codigo,
         )
         response_text = responses.get(key)
         if responses and response_text is None:

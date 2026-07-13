@@ -34,6 +34,12 @@ _TABLE_COLUMNS = [
     "reconstruction_mse",
     "reconstruction_cosine",
     "areas_recomendadas",
+    "sexo_atribuido",
+    "cor_ou_raca",
+    "nome",
+    "idade",
+    "estado",
+    "renda_mensal",
 ]
 
 _FIGURE_LABELS = {

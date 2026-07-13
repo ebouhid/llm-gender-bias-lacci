@@ -8,8 +8,18 @@ from pathlib import Path
 
 import pandas as pd
 
+from src.main.nla.conditions import resolve_condition_keys
+
 _RACE_CODES = ("branca", "preta", "parda", "amarela", "indigena")
 _DROP_FOR_MERGED = ("activation_vector", "nla_raw_response")
+_PROFILE_OUTCOME_KEYS = (
+    "sexo_atribuido",
+    "cor_ou_raca",
+    "nome",
+    "idade",
+    "estado",
+    "renda_mensal",
+)
 
 
 def parse_condition_gender(marcador_codigo: str | None) -> str:
@@ -39,12 +49,22 @@ def format_full_prompt(system_text: str, user_text: str) -> str:
 def _format_prompt_fallback(system: dict, user: dict) -> str:
     """Build a short display prompt from nested generation JSONL fields."""
     marcador = system.get("marcador_descricao") or system.get("marcador") or ""
-    disciplina = user.get("disciplina_descricao") or user.get("disciplina") or ""
-    system_line = f"Eu estou no último ano do ensino médio{marcador}."
-    user_line = str(disciplina).strip()
-    if user_line:
-        return f"{system_line}\n{user_line}"
-    return system_line
+    disciplina = (
+        user.get("disciplina_descricao")
+        or user.get("disciplina")
+        or user.get("graduacao_descricao")
+        or user.get("graduacao")
+        or ""
+    )
+    if marcador or user.get("disciplina_codigo") or user.get("disciplina"):
+        system_line = f"Eu estou no último ano do ensino médio{marcador}."
+        user_line = str(disciplina).strip()
+        if user_line:
+            return f"{system_line}\n{user_line}"
+        return system_line
+    if disciplina:
+        return f"Graduação: {disciplina}"
+    return ""
 
 
 def _parse_jsonl_generation(path: str | Path) -> pd.DataFrame:
@@ -58,13 +78,16 @@ def _parse_jsonl_generation(path: str | Path) -> pd.DataFrame:
                 system = {}
             if not isinstance(user, dict):
                 user = {}
+            marcador_codigo, disciplina_codigo, _ = resolve_condition_keys(
+                system, user
+            )
             rows.append(
                 {
                     "modelo": record.get("modelo"),
                     "temperatura": record.get("temperatura"),
                     "repeticao": record.get("repeticao"),
-                    "marcador_codigo": system.get("marcador_codigo"),
-                    "disciplina_codigo": user.get("disciplina_codigo"),
+                    "marcador_codigo": marcador_codigo,
+                    "disciplina_codigo": disciplina_codigo,
                     "prompt": _format_prompt_fallback(system, user),
                     "model_output": record.get("resposta_raw"),
                     "resposta_raw": record.get("resposta_raw"),
@@ -80,6 +103,21 @@ def _extract_areas(resposta_raw: str) -> str:
         return " | ".join(areas) if isinstance(areas, list) else ""
     except (json.JSONDecodeError, TypeError):
         return ""
+
+
+def _extract_profile_fields(resposta_raw: str) -> dict[str, object]:
+    empty = {key: None for key in _PROFILE_OUTCOME_KEYS}
+    try:
+        data = json.loads(resposta_raw)
+    except (json.JSONDecodeError, TypeError):
+        return empty
+    if not isinstance(data, dict):
+        return empty
+    out: dict[str, object] = {}
+    for key in _PROFILE_OUTCOME_KEYS:
+        value = data.get(key)
+        out[key] = value if value is not None else None
+    return out
 
 
 def _nonempty_str_mask(series: pd.Series) -> pd.Series:
@@ -124,6 +162,37 @@ def enrich_condition_columns(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+def _ensure_outcome_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Fill areas_recomendadas and profile outcome fields from resposta_raw."""
+    out = df.copy()
+    if "resposta_raw" not in out.columns:
+        return out
+
+    if "areas_recomendadas" not in out.columns:
+        out["areas_recomendadas"] = out["resposta_raw"].map(_extract_areas)
+    else:
+        missing_areas = ~_nonempty_str_mask(out["areas_recomendadas"])
+        if missing_areas.any():
+            out.loc[missing_areas, "areas_recomendadas"] = out.loc[
+                missing_areas, "resposta_raw"
+            ].map(_extract_areas)
+
+    profiles = out["resposta_raw"].map(_extract_profile_fields)
+    for key in _PROFILE_OUTCOME_KEYS:
+        extracted = profiles.map(lambda d, k=key: d.get(k))
+        if key not in out.columns:
+            out[key] = extracted
+        else:
+            missing = out[key].isna() | (
+                out[key].astype(str).str.strip().eq("")
+                if out[key].dtype == object
+                else False
+            )
+            if isinstance(missing, pd.Series) and missing.any():
+                out.loc[missing, key] = extracted[missing]
+    return out
+
+
 def build_joined_table(
     activations: pd.DataFrame,
     verbalizations: pd.DataFrame,
@@ -136,22 +205,23 @@ def build_joined_table(
     if generation_jsonl and Path(generation_jsonl).exists():
         gen = _parse_jsonl_generation(generation_jsonl)
         gen["areas_recomendadas"] = gen["resposta_raw"].map(_extract_areas)
+        profile_fields = gen["resposta_raw"].map(_extract_profile_fields)
+        for key in _PROFILE_OUTCOME_KEYS:
+            gen[key] = profile_fields.map(lambda d, k=key: d.get(k))
         joined = joined.merge(
             gen,
-            on=["modelo", "temperatura", "repeticao", "marcador_codigo", "disciplina_codigo"],
+            on=[
+                "modelo",
+                "temperatura",
+                "repeticao",
+                "marcador_codigo",
+                "disciplina_codigo",
+            ],
             how="left",
         )
 
     joined = enrich_prompt_and_output_columns(joined)
-    if "areas_recomendadas" not in joined.columns and "resposta_raw" in joined.columns:
-        joined["areas_recomendadas"] = joined["resposta_raw"].map(_extract_areas)
-    elif "areas_recomendadas" in joined.columns and "resposta_raw" in joined.columns:
-        missing_areas = ~_nonempty_str_mask(joined["areas_recomendadas"])
-        if missing_areas.any():
-            joined.loc[missing_areas, "areas_recomendadas"] = joined.loc[
-                missing_areas, "resposta_raw"
-            ].map(_extract_areas)
-
+    joined = _ensure_outcome_columns(joined)
     return enrich_condition_columns(joined)
 
 
@@ -159,6 +229,7 @@ def prepare_merged_results(joined: pd.DataFrame) -> pd.DataFrame:
     """Drop heavy/raw columns for the persisted visualization table."""
     out = enrich_condition_columns(joined)
     out = enrich_prompt_and_output_columns(out)
+    out = _ensure_outcome_columns(out)
     drop_cols = [c for c in _DROP_FOR_MERGED if c in out.columns]
     if drop_cols:
         out = out.drop(columns=drop_cols)
@@ -212,24 +283,44 @@ def span_level_summary(joined: pd.DataFrame) -> pd.DataFrame:
 
 
 def outcome_linked_summary(joined: pd.DataFrame) -> pd.DataFrame:
-    if "areas_recomendadas" not in joined.columns:
-        return pd.DataFrame()
-
     marker_rows = joined[joined["token_role"] == "demographic_marker"].copy()
-    if marker_rows.empty:
+    work = marker_rows if not marker_rows.empty else joined
+
+    has_areas = (
+        "areas_recomendadas" in work.columns
+        and _nonempty_str_mask(work["areas_recomendadas"]).any()
+    )
+    if has_areas and not marker_rows.empty:
+        return (
+            marker_rows.groupby(
+                ["marcador_codigo", "disciplina_codigo", "areas_recomendadas"],
+                as_index=False,
+            )
+            .agg(
+                n_tokens=("activation_id", "count"),
+                mean_reconstruction_mse=("reconstruction_mse", "mean"),
+                sample_explanation=("nla_explanation", "first"),
+            )
+            .sort_values(["disciplina_codigo", "marcador_codigo"])
+        )
+
+    profile_cols = [
+        c
+        for c in ("sexo_atribuido", "cor_ou_raca")
+        if c in work.columns and work[c].notna().any()
+    ]
+    if not profile_cols or "disciplina_codigo" not in work.columns:
         return pd.DataFrame()
 
+    group_cols = ["disciplina_codigo", *profile_cols]
     return (
-        marker_rows.groupby(
-            ["marcador_codigo", "disciplina_codigo", "areas_recomendadas"],
-            as_index=False,
-        )
+        work.groupby(group_cols, as_index=False)
         .agg(
             n_tokens=("activation_id", "count"),
             mean_reconstruction_mse=("reconstruction_mse", "mean"),
             sample_explanation=("nla_explanation", "first"),
         )
-        .sort_values(["disciplina_codigo", "marcador_codigo"])
+        .sort_values(group_cols)
     )
 
 

@@ -49,6 +49,7 @@ Artifacts are written under `artifacts/nla/` (parquet stages, analysis CSVs/merg
 ├── conf/
 │   ├── main_config.yaml
 │   ├── nla_config.yaml
+│   ├── nla_recommendation_config.yaml
 │   ├── profile_config.yaml
 │   └── recommendation_config.yaml
 │
@@ -123,7 +124,8 @@ NLA run artifacts (activations, verbalizations, reconstructions, analysis CSVs/`
 - profile_config.yaml: configuration for the demographic attribution task.
 - recommendation_config.yaml: configuration for the educational recommendation task.
 - main_config.yaml: default configuration used by run_main.py.
-- nla_config.yaml: configuration for the NLA interpretability pipeline.
+- nla_config.yaml: NLA pipeline config for **profile** runs (composes `profile_config`).
+- nla_recommendation_config.yaml: NLA pipeline config for **recommendation** runs.
 
 ### 2. The configuration files specify:
 
@@ -192,17 +194,22 @@ Local models can be served with SGLang and selected in the config via the `local
 
 Prerequisites: a running SGLang server for the NLA **actor** (`AV_CHECKPOINT`), and actor/critic checkpoints at the paths in `nla_config.yaml`.
 
+Hydra entrypoints:
+
+- **Profile generation (default):** `conf/nla_config.yaml` — composes `profile_config` and joins `data/generated_profiles.jsonl`. Undergraduate-field keys (`graduacao_codigo` / `graduacao_descricao`) are aliased onto the NLA `disciplina_*` / marker-description slots so example IDs and JSONL joins stay unique. Analysis surfaces attributed profile fields (`sexo_atribuido`, `cor_ou_raca`, etc.) from model JSON.
+- **Recommendations:** `conf/nla_recommendation_config.yaml` — composes `recommendation_config` and joins `data/generated_recommendations.jsonl`. Use `--config-name nla_recommendation_config` on every stage.
+
 Launch the actor server with **`--dtype bfloat16`** (required for `input_embeds` verbalization; SGLang's `--dtype auto` can load float16 weights while casting embeds to bfloat16):
 
 ```bash
-pixi run nla-sglang
+pixi run nla-sglang-verbalize
 # equivalent:
 # python -m sglang.launch_server --model-path checkpoints/nla-qwen2.5-7b-L20-av \
 #   --port 30001 --dtype bfloat16 --disable-radix-cache --trust-remote-code \
 #   --max-running-requests 32
 ```
 
-Run the stages in order (Hydra config: `conf/nla_config.yaml`):
+Run the stages in order (default = profile config):
 
 ```bash
 pixi run nla-extract
@@ -212,7 +219,17 @@ pixi run nla-analyze
 pixi run nla-visualize
 ```
 
-Equivalent direct invocations:
+For recommendation runs:
+
+```bash
+python scripts/extract_nla_activations.py --config-name nla_recommendation_config RUN_ID=rec_qwen_l20_v1
+python scripts/run_nla_verbalization.py --config-name nla_recommendation_config RUN_ID=rec_qwen_l20_v1
+python scripts/run_nla_reconstruction.py --config-name nla_recommendation_config RUN_ID=rec_qwen_l20_v1
+python scripts/analyze_nla_gender_bias.py --config-name nla_recommendation_config RUN_ID=rec_qwen_l20_v1
+python scripts/visualize_nla_results.py --config-name nla_recommendation_config RUN_ID=rec_qwen_l20_v1
+```
+
+Equivalent direct invocations (profiles):
 
 ```bash
 python scripts/extract_nla_activations.py
@@ -222,7 +239,7 @@ python scripts/analyze_nla_gender_bias.py
 python scripts/visualize_nla_results.py
 ```
 
-`nla-extract` teacher-forces assistant tokens from `GENERATION_JSONL` when present, assigning `token_role=generated_output`, and stores full `system_text` / `user_text` / `response_text` on each activation row. Without a matching JSONL row, extraction stays prompt-only.
+`nla-extract` teacher-forces assistant tokens from `GENERATION_JSONL` when present, assigning `token_role=generated_output`, and stores full `system_text` / `user_text` / `response_text` on each activation row. Without a matching JSONL row, extraction stays prompt-only. For profiles, the undergraduate-field description is used as the highlight span for `demographic_marker` / tier1 windows when no social `marcador` is present.
 
 Verbalization tiers (`VERBALIZATION_TIER`):
 
@@ -240,7 +257,7 @@ Override settings from the CLI as needed, for example:
 
 ```bash
 python scripts/run_nla_verbalization.py VERBALIZATION_TIER=tier4 VERBALIZATION_BATCH_SIZE=16
-python scripts/extract_nla_activations.py RUN_ID=rec_qwen_l20_v1
+python scripts/extract_nla_activations.py RUN_ID=prof_qwen_l20_v1
 ```
 
 `nla_inference.py` is a compatibility shim / smoke-test CLI for `NLAClient` and `NLACritic`:

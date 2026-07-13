@@ -22,6 +22,7 @@ MODELOS_A_AVALIAR:
   # - ["Qwen/Qwen3-235B-A22B-Instruct-2507", "deepinfra"]
   # - ["nvidia/Nemotron-3-Nano-30B-A3B", "deepinfra"]
   # - ["nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL", "deepinfra"]
+  - ["Qwen/Qwen2.5-7B-Instruct", "local_openai"]
 
 TEMPERATURES: [0.0]
 REPETICOES_POR_TEMP: 1

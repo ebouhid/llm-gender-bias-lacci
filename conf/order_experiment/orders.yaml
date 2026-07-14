@@ -1,0 +1,44 @@
+# Requested JSON attribute order conditions for the order experiment.
+orders:
+  O0_original:
+    - nome
+    - idade
+    - estado
+    - renda_mensal
+    - sexo_atribuido
+    - cor_ou_raca
+  O1:
+    - idade
+    - renda_mensal
+    - nome
+    - cor_ou_raca
+    - estado
+    - sexo_atribuido
+  O2:
+    - renda_mensal
+    - cor_ou_raca
+    - idade
+    - sexo_atribuido
+    - nome
+    - estado
+  O3:
+    - cor_ou_raca
+    - sexo_atribuido
+    - renda_mensal
+    - estado
+    - idade
+    - nome
+  O4:
+    - sexo_atribuido
+    - estado
+    - cor_ou_raca
+    - nome
+    - renda_mensal
+    - idade
+  O5:
+    - estado
+    - nome
+    - sexo_atribuido
+    - idade
+    - cor_ou_raca
+    - renda_mensal

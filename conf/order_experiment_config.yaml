@@ -1,0 +1,41 @@
+EXPERIMENT_MODE: pilot          # pilot | full
+RUN_ID: order_qwen25_7b_v2
+PROMPT_VERSION: v1
+
+MODELO: ["Qwen/Qwen2.5-7B-Instruct", "local_openai"]
+
+# SGLang/OpenAI-compatible sampling; null = omit (server default).
+TOP_K: null
+TOP_P: 0.3
+
+TEMPERATURES_STOCHASTIC: [0.2, 0.7, 1.0]
+# null → resolved from EXPERIMENT_MODE: pilot=32, full=64
+REPETICOES_STOCHASTIC: null
+TEMPERATURE_GREEDY: 0.0
+REPETICOES_GREEDY: 1
+RUN_GREEDY: true
+
+MAX_IN_FLIGHT: 32
+SCHEDULE_CHUNK_SIZE: 256
+FLUSH_EVERY: 64
+RESUME: true
+RETRY_INFRA_ON_RESUME: true
+RETRY_MAX_ATTEMPTS: 3
+RETRY_BACKOFF_S: 1.0
+
+# Full field catalog (also used to resolve descriptions). Pilot uses FIELDS_PILOT_FILE.
+FIELDS_SOURCE: data/undergraduate_fields_for_profile.yaml
+# Full (87) fields come from the profile experiment grid, not the 89-entry yaml alone.
+FIELDS_FULL_CONFIG: conf/profile_config.yaml
+FIELDS_PILOT_FILE: conf/order_experiment/fields_pilot.yaml
+ORDERS_FILE: conf/order_experiment/orders.yaml
+
+ARTIFACTS_DIR: artifacts/order_experiment
+SYSTEM_PROMPT: ""
+
+hydra:
+  job:
+    chdir: false
+  run:
+    dir: .
+  output_subdir: null

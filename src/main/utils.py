@@ -77,7 +77,7 @@ def atualizar_cache_e_salvar_se_necessario(CONTADOR_NOVAS_RESPOSTAS, chave, valo
             logger.error(f"Erro no salvamento incremental: {e}")
     return CONTADOR_NOVAS_RESPOSTAS
 
-async def chamar_api_provider(abordagem, modelo, temperatura, system_prompt, user_prompt):
+async def chamar_api_provider(abordagem, modelo, temperatura, system_prompt, user_prompt, top_k=None, top_p=None):
     response_content = ""
     if abordagem == 'ollama':
         response = client_ollama.chat(
@@ -128,10 +128,21 @@ async def chamar_api_provider(abordagem, modelo, temperatura, system_prompt, use
         grok_resposta = chat.sample()
         response_content = grok_resposta.content
     elif abordagem in ["local_openai", "sglang"]:
+        kwargs = {
+            "model": modelo,
+            "temperature": temperatura,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+        }
+        if top_p is not None:
+            kwargs["top_p"] = float(top_p)
+        # top_k is SGLang-specific; OpenAI SDK accepts it via extra_body.
+        if top_k is not None:
+            kwargs["extra_body"] = {"top_k": int(top_k)}
         local_tipo_openai_resposta = await client_local_tipo_openai.chat.completions.create(
-            model=modelo,
-            temperature=temperatura,
-            messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}]
+            **kwargs
         )
         response_content = local_tipo_openai_resposta.choices[0].message.content
 

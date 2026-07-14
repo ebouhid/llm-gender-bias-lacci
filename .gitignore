@@ -3,5 +3,7 @@
 .env
 /outputs
 /artifacts/nla/
+/artifacts/order_experiment/
 /checkpoints/
 __pycache__/
+*.log

@@ -16,6 +16,8 @@ nla-analyze = "python scripts/analyze_nla_gender_bias.py"
 nla-visualize = "python scripts/visualize_nla_results.py"
 nla-sglang-verbalize = "python -m sglang.launch_server --model-path checkpoints/nla-qwen2.5-7b-L20-av --port 30001 --dtype bfloat16 --disable-radix-cache --trust-remote-code --max-running-requests 32"
 nla-sglang-basemodel = "python -m sglang.launch_server   --model-path Qwen/Qwen2.5-7B-Instruct   --host 127.0.0.1   --port 30000"
+order-exp-run = "python scripts/run_order_experiment.py"
+order-exp-analyze = "python scripts/analyze_order_experiment.py"
 
 [dependencies]
 python = "3.12.*"
